@@ -11,6 +11,7 @@ Example usage – [input-tracking.html](input-tracking.html)
 #### WebXR
 - [x] Create basic WebXR System & components
 - [ ] Create XRInput component(s)
+- [ ] Add User actions support: selecting & other 
 
 #### Integration with Armada   
 - [ ] Move to TypeScript
