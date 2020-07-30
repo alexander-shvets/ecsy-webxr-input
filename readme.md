@@ -15,9 +15,9 @@ Usage example code — [input-tracking.html](input-tracking.html)
 - [ ] Create XRInput component(s)
 - [ ] Add User actions support: selecting & other 
 
-#### Integration with Armada   
+#### Integration into Armada   
 - [ ] Move to TypeScript
-- [ ] Inteegrate with Armada Components
+- [ ] Integrate with Armada Components
 - [ ] Add Behaviours
 
 #### Other
