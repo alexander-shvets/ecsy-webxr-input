@@ -61,8 +61,15 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         let polyfill = new WebXRPolyfill();
       }
 
+      import { World } from "https://ecsy.io/build/ecsy.module.js"
+      import { WebXRSystem, WebXRSession, WebGLRendererContext } from "./webxr-system.js"
+
+      const world = new World();
+      let system = null;
+
       // XR globals.
       let xrButton = null;
+      let isImmersive = false;
       let xrImmersiveRefSpace = null;
       let inlineViewerHelper = null;
 
@@ -76,18 +83,21 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
       function initXR() {
         xrButton = new WebXRButton({
-          onRequestSession: onRequestSession,
-          onEndSession: onEndSession
+          onRequestSession: () =>
+            system.startVR((session, refSpace) => {
+              xrButton.setSession(session);
+              onSessionStarted(session, refSpace);
+          }, onSessionEnded),
+          onEndSession: session => session.end()
         });
         document.querySelector('header').appendChild(xrButton.domElement);
 
-        if (navigator.xr) {
-          navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-            xrButton.enabled = supported;
-          });
-
-          navigator.xr.requestSession('inline').then(onSessionStarted);
-        }
+        world.registerSystem(WebXRSystem, {
+          onVRSupportRequested: isSupported => 
+            isImmersive = xrButton.enabled = isSupported,
+          loopFrame: drawAnimationFrame,
+        })
+        system = world.getSystem(WebXRSystem);
       }
 
       function initGL() {
@@ -97,6 +107,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         gl = createWebGLContext({
           xrCompatible: true
         });
+        world.registerComponent(WebGLRendererContext)
+        world.createEntity().addComponent(WebGLRendererContext, {value: gl})
 
         // Note: If you don't want dragging on the canvas to do things like
         // scroll or pull-to-refresh, you'll want to set touch-action: none;
@@ -119,58 +131,52 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         scene.inputRenderer.setControllerMesh(new Gltf2Node({url: 'media/gltf/controller/controller-left.gltf'}), 'left');
       }
 
-      function onRequestSession() {
-        return navigator.xr.requestSession('immersive-vr', {
-            requiredFeatures: ['local-floor'] 
-        }).then((session) => {
-          xrButton.setSession(session);
-          session.isImmersive = true;
-          onSessionStarted(session);
-        });
-      }
-
-      function onSessionStarted(session) {
-        session.addEventListener('end', onSessionEnded);
+      function onSessionStarted(session, refSpace) {
+        //session.addEventListener('end', onSessionEnded);
 
         initGL();
 
-        let glLayer = new XRWebGLLayer(session, gl);
-        session.updateRenderState({ baseLayer: glLayer });
+        // let glLayer = new XRWebGLLayer(session, gl);
+        // session.updateRenderState({ baseLayer: glLayer });
 
-        let refSpaceType = session.isImmersive ? 'local-floor' : 'viewer';
-        session.requestReferenceSpace(refSpaceType).then((refSpace) => {
-          if (session.isImmersive) {
-            xrImmersiveRefSpace = refSpace;
-          } else {
-            inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
-            inlineViewerHelper.setHeight(1.6);
-          }
-          session.requestAnimationFrame(onXRFrame);
-        });
+        // let refSpaceType = session.isImmersive ? 'local-floor' : 'viewer';
+        // session.requestReferenceSpace(refSpaceType).then((refSpace) => {
+        // if (isImmersive) {
+        //   xrImmersiveRefSpace = refSpace;
+        // } else {
+        //   inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
+        //   inlineViewerHelper.setHeight(1.6);
+        // }
+        // system.requestAnimationFrame(onXRFrame);
+        // });
+        world.execute();
       }
 
-      function onEndSession(session) {
-        session.end();
-      }
-
-      function onSessionEnded(event) {
-        if (event.session.isImmersive) {
+      function onSessionEnded() {
+        if (isImmersive) {
           xrButton.setSession(null);
         }
       }
 
-      function updateInputSources(session, frame, refSpace) {
-        for (let inputSource of session.inputSources) {
-          let targetRayPose = frame.getPose(inputSource.targetRaySpace, refSpace);
+      function drawAnimationFrame(session, viewerPose, inputSourcesData) {
+        scene.startFrame();
+        //const system = world.getSystem(WebXRSystem);
+        //system.requestAnimationFrame(onXRFrame);
 
-          // We may not get a pose back in cases where the input source has lost
-          // tracking or does not know where it is relative to the given frame
-          // of reference.
+        updateInputSources(inputSourcesData);
+
+        scene.drawXRFrame({session}, viewerPose);
+        scene.endFrame();
+      }
+
+      function updateInputSources(controllers) {
+        for (let {targetRayPose, targetRayMode, gripSpace, gripPose, handedness} of controllers) {
+
           if (!targetRayPose) {
             continue;
           }
 
-          if (inputSource.targetRayMode == 'tracked-pointer') {
+          if (targetRayMode == 'tracked-pointer') {
             // If we have a pointer matrix and the pointer origin is the users
             // hand (as opposed to their head or the screen) use it to render
             // a ray coming out of the input device to indicate the pointer
@@ -199,34 +205,13 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
           scene.inputRenderer.addCursor(cursorPos);
           
-          if (inputSource.gripSpace) {
-            let gripPose = frame.getPose(inputSource.gripSpace, refSpace);
-            if (gripPose) {
+          if (gripSpace && gripPose) {
               // If we have a grip pose use it to render a mesh showing the
               // position of the controller.
-              scene.inputRenderer.addController(gripPose.transform.matrix, inputSource.handedness);
-            }
+              scene.inputRenderer.addController(gripPose.transform.matrix, handedness);
           }
-          
         }
-      }
 
-      function onXRFrame(t, frame) {
-        let session = frame.session;
-        let refSpace = session.isImmersive ?
-                         xrImmersiveRefSpace :
-                         inlineViewerHelper.referenceSpace;
-        let pose = frame.getViewerPose(refSpace);
-
-        scene.startFrame();
-
-        session.requestAnimationFrame(onXRFrame);
-
-        updateInputSources(session, frame, refSpace);
-
-        scene.drawXRFrame(frame, pose);
-
-        scene.endFrame();
       }
 
       // Start the XR application.
